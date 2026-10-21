@@ -34,44 +34,55 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-@st.cache_resource
-def get_db_connection():
-    return sqlite3.connect("sai_knowledge_base.db", check_same_thread=False)
+DB_PATH = "sai_knowledge_base.db"
 
 def fetch_guidance_records(user_worry):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Search for matching records where Baba gives a direct quote
     search_term = f"%{user_worry.strip()}%"
-    sql = """
-        SELECT record_id, source_title, primary_category, sub_category, 
-               raw_text_excerpt, baba_direct_quote, canonical_summary, cross_references
-        FROM records
-        WHERE (raw_text_excerpt LIKE ? OR canonical_summary LIKE ? OR tags LIKE ? OR sub_category LIKE ?)
-          AND baba_direct_quote IS NOT NULL 
-          AND baba_direct_quote != ''
-        LIMIT 5
-    """
-    cursor.execute(sql, (search_term, search_term, search_term, search_term))
-    results = cursor.fetchall()
     
-    # Fallback to general comfort quotes if no specific keyword match is found
-    if not results:
-        fallback_sql = """
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        
+        # Search for matching records where Baba gives a direct quote
+        sql = """
             SELECT record_id, source_title, primary_category, sub_category, 
                    raw_text_excerpt, baba_direct_quote, canonical_summary, cross_references
             FROM records
-            WHERE primary_category IN ('CAT-PROTECT', 'CAT-SPIRIT')
+            WHERE (raw_text_excerpt LIKE ? OR canonical_summary LIKE ? OR tags LIKE ? OR sub_category LIKE ?)
               AND baba_direct_quote IS NOT NULL 
               AND baba_direct_quote != ''
-            ORDER BY RANDOM()
-            LIMIT 3
+            LIMIT 5
         """
-        cursor.execute(fallback_sql)
+        cursor.execute(sql, (search_term, search_term, search_term, search_term))
         results = cursor.fetchall()
         
-    conn.close()
+        # Fallback to general comfort quotes if no specific keyword match is found
+        if not results:
+            fallback_sql = """
+                SELECT record_id, source_title, primary_category, sub_category, 
+                       raw_text_excerpt, baba_direct_quote, canonical_summary, cross_references
+                FROM records
+                WHERE primary_category IN ('CAT-PROTECT', 'CAT-SPIRIT')
+                  AND baba_direct_quote IS NOT NULL 
+                  AND baba_direct_quote != ''
+                ORDER BY RANDOM()
+                LIMIT 3
+            """
+            cursor.execute(fallback_sql)
+            results = cursor.fetchall()
+            
+    return results
+
+def search_knowledge_base(query_term):
+    search_pattern = f"%{query_term}%"
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT record_id, source_title, sub_category, raw_text_excerpt, baba_direct_quote, canonical_summary
+            FROM records
+            WHERE raw_text_excerpt LIKE ? OR canonical_summary LIKE ? OR tags LIKE ?
+            LIMIT 10
+        """, (search_pattern, search_pattern, search_pattern))
+        results = cursor.fetchall()
     return results
 
 # Navigation
@@ -85,7 +96,6 @@ with tab1:
     st.markdown("### Place Your Worries at Sainath's Feet")
     st.caption("Describe what you are going through (e.g., suffering, waiting for a long time, disease, financial loss, anxiety).")
 
-    # Sample Preset Questions
     preset = st.selectbox(
         "Or choose a common situation:",
         [
@@ -101,16 +111,17 @@ with tab1:
     user_input = st.text_input("What is on your heart?", value="" if preset.startswith("Select") else preset)
 
     if user_input and not user_input.startswith("Select"):
-        # Extract key keywords from input
-        keyword = "suffering"
-        if "sickness" in user_input.lower() or "health" in user_input.lower() or "pain" in user_input.lower():
+        input_lower = user_input.lower()
+        if "sickness" in input_lower or "health" in input_lower or "disease" in input_lower:
             keyword = "health"
-        elif "anxious" in user_input.lower() or "job" in user_input.lower() or "future" in user_input.lower():
+        elif "anxious" in input_lower or "job" in input_lower or "future" in input_lower:
             keyword = "anxiety"
-        elif "patience" in user_input.lower() or "waiting" in user_input.lower():
+        elif "patience" in input_lower or "waiting" in input_lower or "losing" in input_lower:
             keyword = "Saburi"
-        elif "slander" in user_input.lower() or "speaking ill" in user_input.lower():
+        elif "slander" in input_lower or "speaking ill" in input_lower:
             keyword = "slander"
+        else:
+            keyword = "suffering"
 
         guidance_results = fetch_guidance_records(keyword)
 
@@ -141,18 +152,7 @@ with tab2:
     query_term = st.text_input("Search keywords:", placeholder="e.g., Kakasaheb Dixit, Udi, Cholera, Dakshina")
     
     if query_term:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        search_pattern = f"%{query_term}%"
-        cursor.execute("""
-            SELECT record_id, source_title, sub_category, raw_text_excerpt, baba_direct_quote, canonical_summary
-            FROM records
-            WHERE raw_text_excerpt LIKE ? OR canonical_summary LIKE ? OR tags LIKE ?
-            LIMIT 10
-        """, (search_pattern, search_pattern, search_pattern))
-        res = cursor.fetchall()
-        conn.close()
-        
+        res = search_knowledge_base(query_term)
         for r in res:
             st.markdown(f"**[{r[0]}] {r[1]} — {r[2]}**")
             st.write(r[5])
