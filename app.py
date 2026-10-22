@@ -12,6 +12,7 @@ st.set_page_config(
     layout="wide",
 )
 
+# Custom CSS for Devotional Portal Styling
 st.markdown(
     """
     <style>
@@ -52,19 +53,20 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Absolute Path Resolution for Database
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "sai_knowledge_base.db")
 
 
 # =====================================================================
-# 2. DATABASE HELPER FUNCTIONS
+# 2. DATABASE HELPER & INTENT ROUTING FUNCTIONS
 # =====================================================================
 def get_prashnavali_dual_data(number_1_to_720):
-    """Fetches both traditional 720 Prashnavali answer and canonical literature record."""
+    """Fetches traditional 720 Prashnavali answer and canonical backing record."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # 1. Fetch Traditional Answer from prashnavali_720
+    # 1. Traditional Answer from prashnavali_720
     trad_answer = None
     try:
         cursor.execute(
@@ -77,7 +79,7 @@ def get_prashnavali_dual_data(number_1_to_720):
     except sqlite3.OperationalError:
         pass
 
-    # 2. Fetch Mapped Canonical Literature Record (1 to 230)
+    # 2. Matching Canonical Literature Record (1 to 230 Offset)
     record_offset = (number_1_to_720 - 1) % 230
     cursor.execute(
         """
@@ -95,14 +97,47 @@ def get_prashnavali_dual_data(number_1_to_720):
     return trad_answer, canonical_rec
 
 
-def fetch_guidance_records(keywords, primary_cat=None):
+def resolve_user_intent(user_text):
+    """Checks the pre-computed prashna_intent_map table across all 10 problem domains."""
+    user_lower = user_text.lower()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    or_clauses = " OR ".join(
+    try:
+        cursor.execute(
+            "SELECT phrase, category, target_tags, banner_msg FROM"
+            " prashna_intent_map"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        # Sort by phrase length descending so multi-word intent phrases match first
+        rows.sort(key=lambda x: len(x[0]), reverse=True)
+
+        for phrase, cat, tags_str, banner in rows:
+            if phrase in user_lower:
+                tags_list = [t.strip() for t in tags_str.split(",")]
+                return cat, tags_list, banner
+    except sqlite3.OperationalError:
+        conn.close()
+
+    # Fallback to general spiritual protection
+    return (
+        "CAT-PROTECT",
+        ["protect", "fear", "anxiety", "worry", "surrender"],
+        None,
+    )
+
+
+def fetch_guidance_records_ranked(keywords, primary_cat=None):
+    """Searches canonical records using weighted relevance score ranking."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    exact_conditions = " OR ".join(
         [
-            "(raw_text_excerpt LIKE ? OR canonical_summary LIKE ? OR tags LIKE"
-            " ? OR sub_category LIKE ?)"
+            "(sub_category LIKE ? OR tags LIKE ? OR baba_direct_quote LIKE ? OR"
+            " canonical_summary LIKE ?)"
             for _ in keywords
         ]
     )
@@ -114,23 +149,37 @@ def fetch_guidance_records(keywords, primary_cat=None):
 
     sql = f"""
         SELECT record_id, source_title, primary_category, sub_category, 
-               raw_text_excerpt, baba_direct_quote, canonical_summary, cross_references
+               raw_text_excerpt, baba_direct_quote, canonical_summary, cross_references,
+               (
+                   (CASE WHEN primary_category = ? THEN 5 ELSE 0 END) +
+                   (CASE WHEN sub_category LIKE ? THEN 4 ELSE 0 END) +
+                   (CASE WHEN tags LIKE ? THEN 3 ELSE 0 END) +
+                   (CASE WHEN baba_direct_quote LIKE ? THEN 2 ELSE 0 END)
+               ) as relevance_score
         FROM records
-        WHERE ({or_clauses})
+        WHERE ({exact_conditions})
           AND baba_direct_quote IS NOT NULL 
           AND baba_direct_quote != ''
-        ORDER BY CASE WHEN primary_category = ? THEN 1 ELSE 2 END
+        ORDER BY relevance_score DESC, record_id ASC
         LIMIT 5
     """
 
-    params.append(primary_cat or "")
-    cursor.execute(sql, params)
+    first_kw = f"%{keywords[0]}%" if keywords else "%"
+    score_params = [
+        primary_cat or "",
+        first_kw,
+        first_kw,
+        first_kw,
+    ] + params
+
+    cursor.execute(sql, score_params)
     results = cursor.fetchall()
 
+    # Category fallback if specific search misses
     if not results and primary_cat:
         fallback_sql = """
             SELECT record_id, source_title, primary_category, sub_category, 
-                   raw_text_excerpt, baba_direct_quote, canonical_summary, cross_references
+                   raw_text_excerpt, baba_direct_quote, canonical_summary, cross_references, 1 as score
             FROM records
             WHERE primary_category = ?
               AND baba_direct_quote IS NOT NULL 
@@ -145,6 +194,7 @@ def fetch_guidance_records(keywords, primary_cat=None):
 
 
 def search_records(query_term):
+    """Raw search engine across literature."""
     search_pattern = f"%{query_term.strip()}%"
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -230,7 +280,6 @@ with tab1:
     if chosen_number:
         trad_ans, canonical_rec = get_prashnavali_dual_data(chosen_number)
 
-        # 1. Traditional Prashnavali Answer Box
         if trad_ans:
             st.markdown(
                 f"""
@@ -242,7 +291,6 @@ with tab1:
                 unsafe_allow_html=True,
             )
 
-        # 2. Matching Canonical Backing Record
         if canonical_rec:
             (
                 rec_id,
@@ -269,7 +317,7 @@ with tab1:
 
 
 # =====================================================================
-# TAB 2: SEEK GUIDANCE BY QUERY
+# TAB 2: SEEK GUIDANCE BY PROBLEM (ALL 10 DOMAINS COVERED)
 # =====================================================================
 with tab2:
     st.markdown("### Place Your Worries at Sainath's Feet")
@@ -284,7 +332,8 @@ with tab2:
             "Someone is spreading slander and false rumors against me",
             "I am facing a court case / legal trouble",
             "We are anxious about marriage and children for our family",
-            "I feel fear, danger, and anxiety about the future",
+            "I am worried about my exams, studies, and concentration",
+            "I feel heavy grief, depression, and anxiety about the future",
         ],
     )
 
@@ -294,252 +343,19 @@ with tab2:
     )
 
     if user_input and not user_input.startswith("Select"):
-        input_lower = user_input.lower()
+        # Resolve intent using offline pre-computed semantic map
+        primary_cat, target_keywords, banner_msg = resolve_user_intent(
+            user_input
+        )
 
-        if any(
-            w in input_lower
-            for w in [
-                "job",
-                "employment",
-                "unemployed",
-                "interview",
-                "salary",
-                "promotion",
-                "demotion",
-                "get job",
-                "career",
-                "appointment",
-            ]
-        ):
-            target_keywords = [
-                "job",
-                "employment",
-                "service",
-                "appointment",
-                "post",
-                "work",
-                "livelihood",
-                "demotion",
-            ]
-            primary_cat = "CAT-FINANCE"
-
-        elif any(
-            w in input_lower
-            for w in [
-                "business",
-                "money",
-                "finance",
-                "debt",
-                "trade",
-                "loss",
-                "poverty",
-                "penniless",
-                "rich",
-                "speculation",
-            ]
-        ):
-            target_keywords = [
-                "trade",
-                "business",
-                "earnings",
-                "debt",
-                "money",
-                "finance",
-                "wealth",
-                "speculation",
-            ]
-            primary_cat = "CAT-FINANCE"
-
-        elif any(
-            w in input_lower
-            for w in [
-                "sickness",
-                "health",
-                "disease",
-                "pain",
-                "illness",
-                "fever",
-                "cured",
-                "tuberculosis",
-                "doctor",
-                "hospital",
-                "operation",
-                "medicine",
-                "plague",
-                "cholera",
-                "cancer",
-            ]
-        ):
-            target_keywords = [
-                "health",
-                "cure",
-                "disease",
-                "illness",
-                "doctor",
-                "medicine",
-                "healing",
-                "tuberculosis",
-                "fever",
-                "plague",
-                "Udi",
-            ]
-            primary_cat = "CAT-HEALTH"
-
-        elif any(
-            w in input_lower
-            for w in [
-                "marriage",
-                "wedding",
-                "child",
-                "children",
-                "baby",
-                "son",
-                "daughter",
-                "husband",
-                "wife",
-                "family",
-                "barren",
-                "pregnant",
-            ]
-        ):
-            target_keywords = [
-                "marriage",
-                "child",
-                "issue",
-                "pregnancy",
-                "son",
-                "family",
-                "lineage",
-                "blessing",
-            ]
-            primary_cat = "CAT-RELATION"
-
-        elif any(
-            w in input_lower
-            for w in [
-                "court",
-                "legal",
-                "police",
-                "case",
-                "magistrate",
-                "summons",
-                "lawyer",
-                "inquiry",
-                "jail",
-            ]
-        ):
-            target_keywords = [
-                "court",
-                "magistrate",
-                "summons",
-                "legal",
-                "inquiry",
-                "official",
-                "lawyer",
-                "case",
-            ]
-            primary_cat = "CAT-PROTECT"
-
-        elif any(
-            w in input_lower
-            for w in [
-                "slander",
-                "speaking ill",
-                "gossip",
-                "enemy",
-                "critic",
-                "quarrel",
-                "insult",
-                "jealousy",
-            ]
-        ):
-            target_keywords = [
-                "slander",
-                "critic",
-                "quarrel",
-                "enemy",
-                "talk",
-                "tongue",
-                "insult",
-            ]
-            primary_cat = "CAT-RELATION"
-
-        elif any(
-            w in input_lower
-            for w in [
-                "fear",
-                "scared",
-                "danger",
-                "travel",
-                "accident",
-                "snake",
-                "scorpion",
-                "evil",
-                "protection",
-            ]
-        ):
-            target_keywords = [
-                "protect",
-                "fear",
-                "danger",
-                "shelter",
-                "snake",
-                "scorpion",
-                "travel",
-                "storm",
-            ]
-            primary_cat = "CAT-PROTECT"
-
-        elif any(
-            w in input_lower
-            for w in [
-                "patience",
-                "waiting",
-                "delay",
-                "losing",
-                "how long",
-                "when will",
-                "future",
-                "destiny",
-            ]
-        ):
-            target_keywords = [
-                "Saburi",
-                "patience",
-                "endure",
-                "wait",
-                "time",
-                "Shraddha",
-                "destiny",
-            ]
-            primary_cat = "CAT-SPIRIT"
-
-        else:
-            target_keywords = [
-                "protect",
-                "fear",
-                "anxiety",
-                "worry",
-                "surrender",
-                "shelter",
-                "karma",
-                "cleansing",
-            ]
-            primary_cat = "CAT-PROTECT"
-
-        guidance_results = fetch_guidance_records(
+        guidance_results = fetch_guidance_records_ranked(
             target_keywords, primary_cat=primary_cat
         )
 
         st.markdown("---")
 
-        if "when" in input_lower or "how long" in input_lower:
-            st.info(
-                "⏳ **Sainath's Message on Divine Timing (*Saburi*):** *'Every"
-                " event matures in its appointed time. Have firm faith"
-                " (Shraddha) and patient endurance (Saburi). What is destined"
-                " for you will never pass you by.'*"
-            )
+        if banner_msg:
+            st.info(banner_msg)
 
         st.subheader("🕊️ Sainath's Assurance & Direct Words")
 
@@ -553,6 +369,7 @@ with tab2:
                 quote,
                 summary,
                 cross_refs,
+                score,
             ) = row
 
             st.markdown(
