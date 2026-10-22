@@ -1,15 +1,18 @@
+import os
 import random
 import sqlite3
 import streamlit as st
 
-# 1. Page & Layout Setup
+# =====================================================================
+# 1. PAGE & LAYOUT CONFIGURATION
+# =====================================================================
 st.set_page_config(
     page_title="Shirdi Sai Canonical Knowledge & Prashnavali Portal",
     page_icon="🙏",
     layout="wide",
 )
 
-# 2. Custom CSS Styling
+# Custom CSS for Divine Styling
 st.markdown(
     """
     <style>
@@ -53,9 +56,11 @@ st.markdown(
 DB_PATH = "sai_knowledge_base.db"
 
 
-# 3. Database Utility Functions
+# =====================================================================
+# 2. DATABASE HELPER FUNCTIONS
+# =====================================================================
 def get_record_by_index(number_1_to_720):
-    """Maps a number between 1 and 720 to one of the 230 canonical records."""
+    """Maps a Prashnavali number (1-720) cleanly to one of the 230 canonical records."""
     record_offset = (number_1_to_720 - 1) % 230
 
     conn = sqlite3.connect(DB_PATH)
@@ -77,7 +82,7 @@ def get_record_by_index(number_1_to_720):
 
 
 def fetch_guidance_records(keywords, primary_cat=None):
-    """Searches for records containing any target keywords, prioritizing primary category."""
+    """Searches for records matching target intent keywords, prioritizing the relevant category."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -109,7 +114,7 @@ def fetch_guidance_records(keywords, primary_cat=None):
     cursor.execute(sql, params)
     results = cursor.fetchall()
 
-    # Fallback to category defaults if specific keywords return empty
+    # Fallback to category defaults if specific terms return empty
     if not results and primary_cat:
         fallback_sql = """
             SELECT record_id, source_title, primary_category, sub_category, 
@@ -128,7 +133,7 @@ def fetch_guidance_records(keywords, primary_cat=None):
 
 
 def search_records(query_term):
-    """Performs raw keyword search across all canonical fields."""
+    """Performs raw search across all canonical literature fields."""
     search_pattern = f"%{query_term.strip()}%"
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -157,20 +162,39 @@ def search_records(query_term):
     return results
 
 
-# 4. Main Navigation & Interface Setup
+# =====================================================================
+# 3. HEADER & DWARAKAMAI PHOTO
+# =====================================================================
 st.title("🙏 Shirdi Sai Knowledge & Prashnavali Portal")
+
+# Display Centered Dwarakamai Photo (Local file 'baba.jpg' if present, else fallback URL)
+col_l, col_c, col_r = st.columns([1, 2, 1])
+with col_c:
+    image_source = (
+        "baba.jpg"
+        if os.path.exists("baba.jpg")
+        else "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e0/Sai_Baba_of_Shirdi%2C_seated.jpg/800px-Sai_Baba_of_Shirdi%2C_seated.jpg"
+    )
+    st.image(
+        image_source,
+        caption="Why Fear When I Am Here — Sainath Maharaj in Dwarakamai",
+        use_container_width=True,
+    )
+
+# Navigation Tabs
 tab1, tab2, tab3 = st.tabs(
     ["✨ Sri Sai Prashnavali (1–720)", "🙏 Seek Guidance", "🔍 Search Literature"]
 )
 
-# -------------------------------------------------------------------
+
+# =====================================================================
 # TAB 1: SRI SAI PRASHNAVALI (1–720)
-# -------------------------------------------------------------------
+# =====================================================================
 with tab1:
     st.markdown("### 🕉️ Sri Sai Baba Prashnavali")
     st.write(
-        "Think of Sainath Maharaj, pray in your heart, and select a number from"
-        " **1 to 720**."
+        "Think of Sainath Maharaj, offer your prayer in your heart, and select"
+        " a number from **1 to 720**."
     )
 
     col1, col2 = st.columns([2, 1])
@@ -225,9 +249,10 @@ with tab1:
                 if cross_refs:
                     st.caption(f"🔗 Related Passages: {cross_refs}")
 
-# -------------------------------------------------------------------
-# TAB 2: SEEK GUIDANCE BY QUERY (INTENT-BASED ROUTING)
-# -------------------------------------------------------------------
+
+# =====================================================================
+# TAB 2: SEEK GUIDANCE BY QUERY (INTENT ROUTING)
+# =====================================================================
 with tab2:
     st.markdown("### Place Your Worries at Sainath's Feet")
     preset = st.selectbox(
@@ -251,7 +276,7 @@ with tab2:
     if user_input and not user_input.startswith("Select"):
         input_lower = user_input.lower()
 
-        # Multi-keyword Intent Routing
+        # Multi-keyword Intent Detection
         if any(
             w in input_lower
             for w in [
@@ -393,9 +418,10 @@ with tab2:
                 if cross_refs:
                     st.caption(f"🔗 Related Canonical Passages: {cross_refs}")
 
-# -------------------------------------------------------------------
+
+# =====================================================================
 # TAB 3: REGULAR SEARCH ENGINE
-# -------------------------------------------------------------------
+# =====================================================================
 with tab3:
     st.markdown("### Search 230 Canonically Validated Records")
     query_term = st.text_input(
