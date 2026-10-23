@@ -58,9 +58,30 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "sai_knowledge_base.db")
 
 
+#
+@st.cache_data(ttl=1)  # Refreshes cached queries every second
+def get_prashnavali_result(number):
+    conn = sqlite3.connect("sai_knowledge_base.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT p.answer, r.record_id, r.source_title, r.canonical_summary, r.raw_text_excerpt 
+        FROM prashnavali_720 p 
+        JOIN records r ON p.mapped_record_id = r.record_id 
+        WHERE p.number = ?
+    """,
+        (number,),
+    )
+    result = cursor.fetchone()
+    conn.close()
+    return result
+#
+
 # =====================================================================
 # 2. DATABASE HELPER & INTENT ROUTING FUNCTIONS
 # =====================================================================
+
+
 def get_prashnavali_dual_data(number_1_to_720):
     """Fetches traditional 720 Prashnavali answer and canonical backing record."""
     conn = sqlite3.connect(DB_PATH)
@@ -412,4 +433,4 @@ with tab3:
             st.write(r[6])
             if r[5]:
                 st.info(f'"{r[5]}"')
-            st.markdown("---")
+            st.markdown("---")            
